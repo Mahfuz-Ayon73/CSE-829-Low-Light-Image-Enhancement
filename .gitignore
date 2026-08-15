@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+
+# Large full-reference datasets -- kept locally, not pushed.
+# Download link in README.md.
+datasets/Dataset_Part2/
+datasets/VE-LOL-L/
