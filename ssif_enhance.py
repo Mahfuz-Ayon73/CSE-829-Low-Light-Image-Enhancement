@@ -15,17 +15,42 @@ Pipeline (paper Section 3, Table 1):
   5. HSV -> RGB with the enhanced V and the original H, S.
 
 SSIF filter (eqs. 1-5) is implemented in its self-guided form (guidance
-image G = input I), which collapses the guided-filter cross terms to plain
-local variance:
-    alpha_k = (var_k/2)*r_k + sqrt{ (var_k/2)^2 * r_k^2 + 4*kappa*eps*r_k }
+image G = input I):
+    alpha_k = r_k/2 + sqrt{ (r_k/2)^2 + 4*kappa*eps*r_k }
     r_k     = var_k / (var_k + eps)
     J(q)    = mu_k + alpha_k * (I(q) - mu_k)
 computed with box filters over a (2r+1)x(2r+1) patch.
 
-Note: the paper lists a fourth SSIF parameter, Scale (s), but its formula
-was not recoverable from the source text (see the OCR notes in the
-accompanying .md); the paper itself reports s has a negligible effect on
-PSNR, so it is omitted here rather than guessed at.
+In eq. (5) |phi_k| is the patch covariance of the original and guidance
+images, normalized by the guidance variance sigma^2_k -- i.e. the usual
+guided-filter gain cov(I,G)/var(G), which is identically 1 when G = I.
+Hence the leading term above is r_k/2 rather than var_k*r_k/2. Using the
+raw (unnormalized) covariance instead caps alpha at ~0.19 for V in [0,1],
+which degenerates SSIF into a plain box mean filter: it never sharpens,
+and kappa becomes inert (varying it over 0.1..20 moves the output by
+<= 17/255). That contradicts the paper's own statement in Sec. 3.1 that
+kappa>1 sharpens, kappa<1 smooths, and kappa=1 applies no filtering.
+
+Caveat: the source text is ambiguous about whether phi is the raw or the
+normalized covariance; the normalized reading is inferred from dimensional
+analysis of eq. (5), from deriving it out of eq. (4), and from being the
+only reading consistent with the kappa semantics above. Ref. [22]
+(Deng et al., IEEE OJSP 2 (2021) 119-135) is the definitive source.
+
+Parameters NOT specified by the paper (chosen here, not reproduced):
+  - detail_weights (omega_j in eq. 11): the paper calls this an "arbitrary
+    coefficient" / "predefined enhancement coefficient" and never gives a
+    value.
+  - clip_limit: this is OpenCV's per-tile normalized clip limit, NOT the
+    paper's beta from eq. (6). Eq. (6) is not implementable as printed --
+    M*N/100 for a 512x512 image yields beta ~ 2621*(s_max-1)*alpha/100,
+    which is nonsensical, almost certainly an OCR corruption of a per-tile
+    pixel count. Table 1 lists beta as an input anyway.
+  - Self-guiding (G = I): a reading of eq. (7), which writes SSIF(I) with
+    no separate guidance image; the paper does not state it explicitly.
+  - Scale (s): the paper lists it as a fourth SSIF parameter but its
+    formula is not recoverable from the source text. The paper reports s
+    has a negligible effect on PSNR, so it is omitted rather than guessed.
 """
 from __future__ import annotations
 
@@ -48,13 +73,31 @@ def local_variance(img: np.ndarray, r: int) -> tuple[np.ndarray, np.ndarray]:
     return mu, var
 
 
-def ssif_filter(img: np.ndarray, r: int, kappa: float, eps: float) -> np.ndarray:
-    """Self-guided smoothing-sharpening filter (eqs. 1-5, G = I)."""
-    mu, var = local_variance(img, r)
-    ratio = var / (var + eps)
-    term = 0.5 * var * ratio
+def ssif_filter(
+    img: np.ndarray,
+    r: int,
+    kappa: float,
+    eps: float,
+    guide: np.ndarray | None = None,
+) -> np.ndarray:
+    """Guided smoothing-sharpening filter (eqs. 1-5); self-guided when guide is None."""
+    if guide is None:
+        guide = img
+
+    v_mean, guide_var = local_variance(guide, r)
+    mu = box_mean(img, r)
+    # phi_k: patch covariance of input and guidance, normalized by the
+    # guidance variance (eq. 5). Identically 1 in the self-guided case.
+    cov = box_mean(img * guide, r) - mu * v_mean
+    # Normalize by guide_var alone, not guide_var + eps: eq. (5) applies the
+    # eps regularization separately via ratio, so folding it in here too
+    # would double-count it. phi is then identically 1 when G = I.
+    phi = np.divide(cov, guide_var, out=np.ones_like(cov), where=guide_var > 0)
+
+    ratio = guide_var / (guide_var + eps)
+    term = 0.5 * np.abs(phi) * ratio
     alpha = term + np.sqrt(term * term + 4.0 * kappa * eps * ratio)
-    return mu + alpha * (img - mu)
+    return mu + np.sign(cov) * alpha * (guide - v_mean)
 
 
 def multiscale_decompose(v: np.ndarray, levels: int, r: int, kappa: float, eps: float):
