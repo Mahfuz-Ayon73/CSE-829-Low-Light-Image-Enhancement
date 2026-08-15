@@ -56,18 +56,39 @@ The one check that does not depend on any unstated parameter:
 
 Positive on every split.
 
-A second control — the pre-fix, blur-only SSIF (see §3.3) — was run to isolate
-how much of this gain comes from the eq. (5) correction rather than from CLAHE
-alone. That run was interrupted and **its full-dataset numbers are not
-available**. On a 5-scene Part2 smoke test it scored PSNR 13.176 / SSIM 0.681
-against identity's 12.192 / 0.621 and the fixed version's 13.784 / 0.701,
-i.e. the correction accounted for roughly a third of the gain over identity on
-that sample. That is a 5-scene result and should not be quoted as a
-full-dataset figure. Re-run with:
+### How much of the gain comes from the eq. (5) fix?
 
-```bash
-python _eval_baseline.py --max-side 1024
-```
+A second control — the pre-fix, blur-only SSIF (§3.3) — isolates the
+correction's contribution from CLAHE's. Full dataset, same protocol:
+
+| Split | identity | pre-fix (blur-only) | fixed |
+|---|---|---|---|
+| Part2, PSNR | 12.502 | 12.993 | 13.503 |
+| Part2, SSIM | 0.510 | 0.532 | 0.549 |
+| VE-LOL-Syn, PSNR | 11.481 | 12.150 | 12.343 |
+| VE-LOL-Syn, SSIM | 0.490 | 0.506 | 0.515 |
+| VE-LOL-Cap, PSNR | 8.832 | 9.573 | 9.901 |
+| VE-LOL-Cap, SSIM | 0.200 | 0.248 | 0.250 |
+
+Attributing the total gain over identity:
+
+| Split | CLAHE etc. (identity→pre-fix) | eq. (5) fix (pre-fix→fixed) | fix's share |
+|---|---|---|---|
+| Part2 | +0.491 dB / +0.022 | +0.510 dB / +0.017 | 51% PSNR, 44% SSIM |
+| VE-LOL-Syn | +0.669 dB / +0.016 | +0.193 dB / +0.009 | 22% PSNR, 36% SSIM |
+| VE-LOL-Cap | +0.741 dB / +0.048 | +0.328 dB / +0.002 | 31% PSNR, 4% SSIM |
+
+The correction is monotonically positive on every split and every metric, and
+on Part2 it accounts for about half the total improvement. This is independent
+empirical support for the normalized reading of `|phi_k|` in §3.3: that reading
+is not merely the one consistent with the paper's stated `kappa` semantics, it
+also measurably outperforms the raw reading against ground truth on 229 scenes
+and 1500 pairs. It is not proof — ref. [22] remains the authority — but it is
+the strongest evidence obtainable without the primary source.
+
+The effect is much weaker on VE-LOL-Cap SSIM (+0.002), where both variants sit
+near the floor (~0.25); that split is dominated by whatever the enhancement
+cannot fix, so it discriminates poorly between them.
 
 ---
 
@@ -142,7 +163,9 @@ sharpens and in which `kappa` is inert (sweeping 0.1..20 moved the output by
 
 **This has not been checked against the primary source.** Ref. [22] (Deng et
 al., *IEEE OJSP* 2 (2021) 119–135) defines `phi_k` properly and should be
-consulted before citing any of this.
+consulted before citing any of this. The normalized reading does, however,
+beat the raw one against ground truth on every split — see the attribution
+table in §1.
 
 ### 3.4 Resolution (deviation introduced here)
 
